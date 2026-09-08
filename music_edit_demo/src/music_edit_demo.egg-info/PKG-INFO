@@ -1,0 +1,71 @@
+Metadata-Version: 2.4
+Name: music-edit-demo
+Version: 0.1.0
+Summary: Data-independent scaffold for natural-language multitrack music editing
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: pydantic<3,>=2.8
+Provides-Extra: api
+Requires-Dist: fastapi<1,>=0.115; extra == "api"
+Requires-Dist: uvicorn[standard]<1,>=0.30; extra == "api"
+
+# Music Edit Demo
+
+This project is the data-independent scaffold for the MUSDB18 natural-language
+music editing demo. It provides:
+
+- a versioned edit-plan schema;
+- controlled Chinese instruction parsing, plus an optional Qwen endpoint;
+- project, plan, job, and result persistence;
+- a generator adapter interface with fake and ACE-Step HTTP backends;
+- target-stem-only compositing with equal-power crossfades;
+- a CLI and FastAPI service;
+- synthetic-audio tests that do not require MUSDB18.
+
+The `fake` backend performs deterministic DSP transformations. It exists only
+to validate orchestration and must not be used to assess model quality. Every
+result records its backend name.
+
+## Local setup
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[api]"
+```
+
+Run the data-independent smoke demo:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m music_edit_demo synthetic --duration 12
+python -m music_edit_demo plan --project-id synthetic-demo --start 3 --end 7 --instruction "把鼓点加密，贝斯更有力量，其他轨保持不变"
+python -m music_edit_demo run --plan-id <PLAN_ID>
+```
+
+Start the API:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m music_edit_demo serve --host 127.0.0.1 --port 8000
+```
+
+API documentation is available at `http://127.0.0.1:8000/docs`.
+
+## Runtime configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MUSIC_EDIT_RUNTIME_DIR` | `./runtime` | Projects, plans, jobs, and results |
+| `MUSIC_EDIT_PARSER` | `controlled` | `controlled` or `qwen` |
+| `MUSIC_EDIT_GENERATOR` | `fake` | `fake` or `ace_step_http` |
+| `QWEN_BASE_URL` | empty | OpenAI-compatible base URL |
+| `QWEN_API_KEY` | empty | Optional API key |
+| `QWEN_MODEL` | `Qwen3-4B-Instruct` | Parser model name |
+| `ACE_STEP_BASE_URL` | empty | ACE-Step adapter service URL |
+
+## Current input boundary
+
+The scaffold registers four PCM WAV stems (`vocals`, `drums`, `bass`, and
+`other`). The MUSDB18 `.stem.mp4` importer and real model service are connected
+after the full dataset and its decoding dependencies are available.
+
