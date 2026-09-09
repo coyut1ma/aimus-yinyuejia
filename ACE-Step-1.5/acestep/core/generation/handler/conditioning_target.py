@@ -143,6 +143,43 @@ class ConditioningTargetMixin:
             )
             return target_wavs, target_latents, latent_masks, max_latent_length, silence_latent_tiled
 
+    def _prepare_multi_stem_latents(
+        self,
+        multi_stem_target_wavs: Optional[torch.Tensor],
+        batch_size: int,
+        max_latent_length: int,
+    ) -> Optional[torch.Tensor]:
+        """Encode four stem waveforms into aligned latents shaped ``[B, 4, T, C]``."""
+        if multi_stem_target_wavs is None:
+            return None
+        multi_stem_target_wavs = torch.as_tensor(multi_stem_target_wavs)
+        if multi_stem_target_wavs.ndim == 3:
+            multi_stem_target_wavs = multi_stem_target_wavs.unsqueeze(0)
+        if multi_stem_target_wavs.ndim != 4:
+            raise ValueError("multi_stem_target_wavs must be shaped [B, 4, C, samples] or [4, C, samples]")
+        if multi_stem_target_wavs.shape[0] == 1 and batch_size > 1:
+            multi_stem_target_wavs = multi_stem_target_wavs.expand(batch_size, -1, -1, -1).clone()
+        if multi_stem_target_wavs.shape[0] != batch_size:
+            raise ValueError("multi_stem_target_wavs batch size must match generation batch size")
+        if multi_stem_target_wavs.shape[1] != 4:
+            raise ValueError(f"multi_stem_target_wavs must contain exactly 4 stems, got {multi_stem_target_wavs.shape[1]}")
+
+        stem_batches = []
+        with torch.inference_mode():
+            with self._load_model_context("vae"):
+                for batch_idx in range(batch_size):
+                    stem_latents = []
+                    for stem_idx in range(4):
+                        wav = multi_stem_target_wavs[batch_idx, stem_idx].to(self.device)
+                        if self.is_silence(wav):
+                            latent = self._get_silence_latent_slice(max_latent_length)
+                        else:
+                            latent = self._encode_audio_to_latents(wav)
+                            latent = self._align_source_repaint_latent(latent, max_latent_length)
+                        stem_latents.append(latent)
+                    stem_batches.append(torch.stack(stem_latents, dim=0))
+        return torch.stack(stem_batches, dim=0)
+
     def _normalize_source_repaint_latents(
         self,
         source_repaint_latents: Optional[torch.Tensor],

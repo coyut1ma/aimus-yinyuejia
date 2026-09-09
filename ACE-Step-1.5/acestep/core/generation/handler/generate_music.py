@@ -246,6 +246,9 @@ class GenerateMusicMixin:
         flow_edit_n_min: float = 0.0,
         flow_edit_n_max: float = 1.0,
         flow_edit_n_avg: int = 1,
+        joint_frontend: bool = False,
+        target_stem_id: Any = 0,
+        multi_stem_target_wavs: Optional[torch.Tensor] = None,
         progress=None,
     ) -> Dict[str, Any]:
         """Generate audio from text/reference inputs and return response payload.
@@ -275,6 +278,11 @@ class GenerateMusicMixin:
             latent_rescale: Multiplicative latent post-processing value.
             source_repaint_latents: Optional cached source latents used for
                 generated-source repaint instead of repaint-time VAE encoding.
+            joint_frontend: Enable the optional early multi-stem DiT frontend.
+            target_stem_id: Target stem index in the fixed order
+                vocals/drums/bass/other.
+            multi_stem_target_wavs: Optional four-stem audio tensor shaped
+                ``[B, 4, C, samples]`` used as cross-stem context.
             progress: Optional callback taking ``(ratio, desc=...)``.
 
         Returns:
@@ -435,6 +443,9 @@ class GenerateMusicMixin:
                 flow_edit_n_min=flow_edit_n_min,
                 flow_edit_n_max=flow_edit_n_max,
                 flow_edit_n_avg=flow_edit_n_avg,
+                joint_frontend=joint_frontend,
+                target_stem_id=target_stem_id,
+                multi_stem_target_wavs=multi_stem_target_wavs,
             )
             outputs = service_run["outputs"]
             infer_steps_for_progress = service_run["infer_steps_for_progress"]
@@ -486,7 +497,8 @@ class GenerateMusicMixin:
                 "src_latents", "target_latents_input", "chunk_masks",
                 "latent_masks", "encoder_hidden_states",
                 "encoder_attention_mask", "context_latents",
-                "lyric_token_idss",
+                "lyric_token_idss", "multi_stem_src_latents",
+                "multi_stem_chunk_masks",
             )
             for _k in _gpu_keys:
                 outputs.pop(_k, None)

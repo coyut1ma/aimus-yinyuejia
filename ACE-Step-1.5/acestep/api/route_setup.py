@@ -13,6 +13,7 @@ from acestep.api.http.audio_route import register_audio_route
 from acestep.api.http.lora_routes import register_lora_routes
 from acestep.api.http.model_service_routes import register_model_service_routes
 from acestep.api.http.query_result_route import register_query_result_route
+from acestep.api.http.repaint_route import register_repaint_route
 from acestep.api.http.reinitialize_route import register_reinitialize_route
 from acestep.api.http.release_task_route import register_release_task_route
 from acestep.api.http.sample_format_routes import register_sample_format_routes
@@ -130,6 +131,8 @@ def configure_api_routes(
     )
 
     register_audio_route(app=app, verify_api_key=verify_api_key)
+
+    register_repaint_route(app=app, verify_api_key=verify_api_key)
 
     register_release_task_route(
         app=app,

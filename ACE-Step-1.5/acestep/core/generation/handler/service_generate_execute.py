@@ -12,28 +12,56 @@ class ServiceGenerateExecuteMixin:
 
     def _unpack_service_processed_data(self, processed_data: Tuple[Any, ...]) -> Dict[str, Any]:
         """Convert batch preprocessing tuple into a keyed payload."""
-        (
-            keys,
-            text_inputs,
-            src_latents,
-            target_latents,
-            text_hidden_states,
-            text_attention_mask,
-            lyric_hidden_states,
-            lyric_attention_mask,
-            _audio_attention_mask,
-            refer_audio_acoustic_hidden_states_packed,
-            refer_audio_order_mask,
-            chunk_mask,
-            spans,
-            is_covers,
-            _audio_codes,
-            lyric_token_idss,
-            precomputed_lm_hints_25Hz,
-            non_cover_text_hidden_states,
-            non_cover_text_attention_masks,
-            repaint_mask,
-        ) = processed_data
+        multi_stem_src_latents = None
+        multi_stem_chunk_masks = None
+        if len(processed_data) == 22:
+            (
+                keys,
+                text_inputs,
+                src_latents,
+                target_latents,
+                text_hidden_states,
+                text_attention_mask,
+                lyric_hidden_states,
+                lyric_attention_mask,
+                _audio_attention_mask,
+                refer_audio_acoustic_hidden_states_packed,
+                refer_audio_order_mask,
+                chunk_mask,
+                spans,
+                is_covers,
+                _audio_codes,
+                lyric_token_idss,
+                precomputed_lm_hints_25Hz,
+                non_cover_text_hidden_states,
+                non_cover_text_attention_masks,
+                repaint_mask,
+                multi_stem_src_latents,
+                multi_stem_chunk_masks,
+            ) = processed_data
+        else:
+            (
+                keys,
+                text_inputs,
+                src_latents,
+                target_latents,
+                text_hidden_states,
+                text_attention_mask,
+                lyric_hidden_states,
+                lyric_attention_mask,
+                _audio_attention_mask,
+                refer_audio_acoustic_hidden_states_packed,
+                refer_audio_order_mask,
+                chunk_mask,
+                spans,
+                is_covers,
+                _audio_codes,
+                lyric_token_idss,
+                precomputed_lm_hints_25Hz,
+                non_cover_text_hidden_states,
+                non_cover_text_attention_masks,
+                repaint_mask,
+            ) = processed_data
         return {
             "keys": keys,
             "text_inputs": text_inputs,
@@ -53,6 +81,8 @@ class ServiceGenerateExecuteMixin:
             "non_cover_text_hidden_states": non_cover_text_hidden_states,
             "non_cover_text_attention_masks": non_cover_text_attention_masks,
             "repaint_mask": repaint_mask,
+            "multi_stem_src_latents": multi_stem_src_latents,
+            "multi_stem_chunk_masks": multi_stem_chunk_masks,
         }
 
     def _resolve_service_seed_param(self, seed_list: Optional[List[int]]) -> Any:
@@ -95,6 +125,8 @@ class ServiceGenerateExecuteMixin:
         dcw_wavelet: str = "haar",
         retake_seed: Any = None,
         retake_variance: float = 0.0,
+        joint_frontend: bool = False,
+        target_stem_id: Any = 0,
     ) -> Dict[str, Any]:
         """Build kwargs passed to model generation backends."""
         repaint_mask = payload.get("repaint_mask")
@@ -138,6 +170,10 @@ class ServiceGenerateExecuteMixin:
             "dcw_wavelet": dcw_wavelet,
             "retake_seed": retake_seed,
             "retake_variance": retake_variance,
+            "joint_frontend": bool(joint_frontend or payload.get("multi_stem_src_latents") is not None),
+            "target_stem_id": target_stem_id,
+            "multi_stem_src_latents": payload.get("multi_stem_src_latents"),
+            "multi_stem_chunk_masks": payload.get("multi_stem_chunk_masks"),
         }
         if timesteps is not None:
             kwargs["timesteps"] = torch.tensor(timesteps, dtype=torch.float32, device=self.device)
@@ -167,9 +203,11 @@ class ServiceGenerateExecuteMixin:
                 self, payload=payload, generate_kwargs=generate_kwargs,
                 seed_param=seed_param, flow_edit_ctx=flow_edit_ctx,
             )
-        dit_backend = (
-            "MLX (native)" if (self.use_mlx_dit and self.mlx_decoder is not None) else f"PyTorch ({self.device})"
-        )
+        use_mlx_backend = self.use_mlx_dit and self.mlx_decoder is not None
+        if generate_kwargs.get("joint_frontend") and use_mlx_backend:
+            logger.info("[service_generate] joint_frontend requires PyTorch DiT; bypassing MLX backend.")
+            use_mlx_backend = False
+        dit_backend = "MLX (native)" if use_mlx_backend else f"PyTorch ({self.device})"
         logger.info(f"[service_generate] Generating audio... (DiT backend: {dit_backend})")
         with torch.inference_mode():
             with self._load_model_context("model"):
@@ -194,7 +232,7 @@ class ServiceGenerateExecuteMixin:
                     precomputed_lm_hints_25Hz=payload["precomputed_lm_hints_25Hz"],
                 )
 
-                if self.use_mlx_dit and self.mlx_decoder is not None:
+                if use_mlx_backend:
                     dcw_enabled = generate_kwargs["dcw_enabled"]
                     if dcw_enabled and generate_kwargs.get("dcw_wavelet", "haar") != "haar":
                         logger.info(

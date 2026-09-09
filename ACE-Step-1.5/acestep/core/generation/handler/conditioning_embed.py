@@ -99,6 +99,8 @@ class ConditioningEmbedMixin:
 
         chunk_mask = batch["chunk_masks"]
         chunk_mask = chunk_mask.to(device).unsqueeze(-1).repeat(1, 1, target_latents.shape[2])
+        multi_stem_src_latents = batch.get("multi_stem_src_latents", None)
+        multi_stem_chunk_masks = batch.get("multi_stem_chunk_masks", None)
         spans = batch["spans"]
 
         text_token_idss = batch["text_token_idss"]
@@ -145,4 +147,6 @@ class ConditioningEmbedMixin:
             non_cover_text_hidden_states,
             non_cover_text_attention_masks,
             repaint_mask,
+            multi_stem_src_latents,
+            multi_stem_chunk_masks,
         )

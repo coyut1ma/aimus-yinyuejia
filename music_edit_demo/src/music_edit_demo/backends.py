@@ -147,6 +147,8 @@ class AceStepHttpGenerator:
             "stems": {stem.value: path for stem, path in project.stems.items()},
             "region": plan.region.model_dump(mode="json"),
             "targets": [target.model_dump(mode="json") for target in plan.targets],
+            "target_stems": [target.stem.value for target in plan.targets],
+            "joint_frontend": True,
             "prompt": plan.generator_prompt,
             "preserve": plan.preserve,
             "seeds": plan.seeds,

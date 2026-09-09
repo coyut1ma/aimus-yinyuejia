@@ -573,8 +573,15 @@ class AceStepPreTrainedModel(PreTrainedModel):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, nn.MultiheadAttention):
+            module.in_proj_weight.data.normal_(mean=0.0, std=std)
+            if module.in_proj_bias is not None:
+                module.in_proj_bias.data.zero_()
         elif isinstance(module, Qwen3RMSNorm):
             module.weight.data.fill_(1.0)
+        elif module.__class__.__name__ == "MultiStemFrontend":
+            module.stem_embedding.data.zero_()
+            module.residual_gate.data.zero_()
 
 
 class AceStepLyricEncoder(AceStepPreTrainedModel):
@@ -1240,6 +1247,74 @@ class Lambda(nn.Module):
         return self.func(x)
 
 
+class MultiStemFrontend(nn.Module):
+    """Early four-stem exchange module used by the optional joint frontend path."""
+
+    def __init__(self, config: AceStepConfig, num_stems: int = 4):
+        super().__init__()
+        self.num_stems = num_stems
+        self.hidden_size = config.hidden_size
+        self.stem_embedding = nn.Parameter(torch.zeros(num_stems, config.hidden_size))
+        self.cross_stem_norm = Qwen3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.cross_stem_attn = nn.MultiheadAttention(
+            embed_dim=config.hidden_size,
+            num_heads=config.num_attention_heads,
+            dropout=config.attention_dropout,
+            bias=config.attention_bias,
+            batch_first=True,
+        )
+        self.residual_gate = nn.Parameter(torch.zeros(()))
+
+    def add_stem_embedding(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        stem_emb = self.stem_embedding.to(device=hidden_states.device, dtype=hidden_states.dtype)
+        return hidden_states + stem_emb[None, :, None, :]
+
+    def cross_stem_attention(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        bsz, num_stems, seq_len, hidden_size = hidden_states.shape
+        if num_stems != self.num_stems:
+            raise ValueError(f"Expected {self.num_stems} stems, got {num_stems}")
+        norm_hidden_states = self.cross_stem_norm(hidden_states).type_as(hidden_states)
+        stem_tokens = norm_hidden_states.permute(0, 2, 1, 3).reshape(bsz * seq_len, num_stems, hidden_size)
+        no_self_mask = torch.eye(num_stems, device=hidden_states.device, dtype=torch.bool)
+        attended, _ = self.cross_stem_attn(
+            stem_tokens,
+            stem_tokens,
+            stem_tokens,
+            attn_mask=no_self_mask,
+            need_weights=False,
+        )
+        attended = attended.reshape(bsz, seq_len, num_stems, hidden_size).permute(0, 2, 1, 3)
+        gate = self.residual_gate.to(device=hidden_states.device, dtype=hidden_states.dtype)
+        return hidden_states + gate * attended.type_as(hidden_states)
+
+    def select_target_stem(
+        self,
+        hidden_states: torch.Tensor,
+        target_stem_id: Union[int, torch.Tensor],
+    ) -> torch.Tensor:
+        bsz, _num_stems, seq_len, hidden_size = hidden_states.shape
+        if not isinstance(target_stem_id, torch.Tensor):
+            target_stem_id = torch.tensor(target_stem_id, device=hidden_states.device, dtype=torch.long)
+        target_stem_id = target_stem_id.to(device=hidden_states.device, dtype=torch.long)
+        if target_stem_id.ndim == 0:
+            target_stem_id = target_stem_id.expand(bsz)
+        if target_stem_id.shape != (bsz,):
+            raise ValueError(f"target_stem_id must be a scalar or shape [{bsz}], got {tuple(target_stem_id.shape)}")
+        if torch.any((target_stem_id < 0) | (target_stem_id >= self.num_stems)):
+            raise ValueError(f"target_stem_id values must be in [0, {self.num_stems - 1}]")
+        gather_idx = target_stem_id.view(bsz, 1, 1, 1).expand(-1, 1, seq_len, hidden_size)
+        return hidden_states.gather(dim=1, index=gather_idx).squeeze(1)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        target_stem_id: Union[int, torch.Tensor],
+    ) -> torch.Tensor:
+        hidden_states = self.add_stem_embedding(hidden_states)
+        hidden_states = self.cross_stem_attention(hidden_states)
+        return self.select_target_stem(hidden_states, target_stem_id)
+
+
 class AceStepDiTModel(AceStepPreTrainedModel):
     """
     DiT (Diffusion Transformer) model for AceStep.
@@ -1256,6 +1331,7 @@ class AceStepDiTModel(AceStepPreTrainedModel):
         self.layers = nn.ModuleList(
             [AceStepDiTLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
+        self.multi_stem_frontend = MultiStemFrontend(config)
 
         in_channels = config.in_channels
         inner_dim = config.hidden_size
@@ -1304,6 +1380,134 @@ class AceStepDiTModel(AceStepPreTrainedModel):
 
         self.gradient_checkpointing = False
 
+    @staticmethod
+    def _repeat_for_stems(tensor: Optional[torch.Tensor], batch_size: int, num_stems: int) -> Optional[torch.Tensor]:
+        if tensor is None:
+            return None
+        flat_batch = batch_size * num_stems
+        if tensor.shape[0] == flat_batch:
+            return tensor
+        if tensor.shape[0] == batch_size:
+            return tensor.repeat_interleave(num_stems, dim=0)
+        if tensor.shape[0] == 1:
+            return tensor
+        raise ValueError(
+            f"Cannot repeat tensor with batch dim {tensor.shape[0]} for "
+            f"batch_size={batch_size}, num_stems={num_stems}"
+        )
+
+    def _repeat_position_embeddings_for_stems(
+        self,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        batch_size: int,
+        num_stems: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return tuple(
+            self._repeat_for_stems(tensor, batch_size, num_stems)
+            for tensor in position_embeddings
+        )
+
+    def _normalize_target_stem_id(
+        self,
+        target_stem_id: Union[int, torch.Tensor],
+        batch_size: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        if not isinstance(target_stem_id, torch.Tensor):
+            target_stem_id = torch.tensor(target_stem_id, device=device, dtype=torch.long)
+        target_stem_id = target_stem_id.to(device=device, dtype=torch.long)
+        if target_stem_id.ndim == 0:
+            target_stem_id = target_stem_id.expand(batch_size)
+        if target_stem_id.shape != (batch_size,):
+            raise ValueError(f"target_stem_id must be a scalar or shape [{batch_size}], got {tuple(target_stem_id.shape)}")
+        if torch.any((target_stem_id < 0) | (target_stem_id >= self.multi_stem_frontend.num_stems)):
+            raise ValueError(f"target_stem_id values must be in [0, {self.multi_stem_frontend.num_stems - 1}]")
+        return target_stem_id
+
+    def _prepare_joint_frontend_inputs(
+        self,
+        *,
+        hidden_states: torch.Tensor,
+        context_latents: torch.Tensor,
+        multi_stem_hidden_states: Optional[torch.Tensor],
+        multi_stem_context_latents: Optional[torch.Tensor],
+        target_stem_id: Union[int, torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if multi_stem_context_latents is None:
+            raise ValueError("multi_stem_context_latents is required when joint_frontend=True")
+
+        if multi_stem_context_latents.ndim != 4:
+            raise ValueError(
+                "multi_stem_context_latents must have shape [B, 4, T, C_ctx], "
+                f"got {tuple(multi_stem_context_latents.shape)}"
+            )
+        batch_size, num_stems, seq_len, context_dim = multi_stem_context_latents.shape
+        if num_stems != self.multi_stem_frontend.num_stems:
+            raise ValueError(f"Expected {self.multi_stem_frontend.num_stems} stems, got {num_stems}")
+        if hidden_states.shape[:2] != (batch_size, seq_len):
+            raise ValueError(
+                "hidden_states must match multi-stem batch/time dimensions, "
+                f"got hidden={tuple(hidden_states.shape)}, multi={tuple(multi_stem_context_latents.shape)}"
+            )
+        if context_latents.shape != (batch_size, seq_len, context_dim):
+            raise ValueError(
+                "context_latents must match one branch of multi_stem_context_latents, "
+                f"got context={tuple(context_latents.shape)}, multi={tuple(multi_stem_context_latents.shape)}"
+            )
+
+        if multi_stem_hidden_states is None:
+            hidden_dim = hidden_states.shape[-1]
+            multi_stem_hidden_states = multi_stem_context_latents[..., :hidden_dim]
+        if multi_stem_hidden_states.shape != (batch_size, num_stems, seq_len, hidden_states.shape[-1]):
+            raise ValueError(
+                "multi_stem_hidden_states must have shape [B, 4, T, C_audio], "
+                f"got {tuple(multi_stem_hidden_states.shape)}"
+            )
+
+        target_stem_id = self._normalize_target_stem_id(target_stem_id, batch_size, hidden_states.device)
+        stem_inputs = torch.cat([multi_stem_context_latents, multi_stem_hidden_states], dim=-1)
+        target_input = torch.cat([context_latents, hidden_states], dim=-1)
+        gather_idx = target_stem_id.view(batch_size, 1, 1, 1).expand(
+            -1, 1, seq_len, target_input.shape[-1]
+        )
+        stem_inputs = stem_inputs.scatter(dim=1, index=gather_idx, src=target_input.unsqueeze(1))
+        return stem_inputs, target_stem_id
+
+    def _run_shared_block1_for_stems(
+        self,
+        *,
+        hidden_states: torch.Tensor,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        timestep_proj: torch.Tensor,
+        attention_mask: Optional[torch.Tensor],
+        position_ids: Optional[torch.LongTensor],
+        past_key_values: Optional[EncoderDecoderCache],
+        output_attentions: Optional[bool],
+        use_cache: Optional[bool],
+        cache_position: Optional[torch.LongTensor],
+        encoder_hidden_states: Optional[torch.Tensor],
+        encoder_attention_mask: Optional[torch.Tensor],
+        **flash_attn_kwargs,
+    ) -> tuple[torch.Tensor, tuple]:
+        batch_size, num_stems, seq_len, hidden_size = hidden_states.shape
+        flat_hidden_states = hidden_states.reshape(batch_size * num_stems, seq_len, hidden_size)
+        layer_outputs = self.layers[0](
+            flat_hidden_states,
+            self._repeat_position_embeddings_for_stems(position_embeddings, batch_size, num_stems),
+            self._repeat_for_stems(timestep_proj, batch_size, num_stems),
+            self._repeat_for_stems(attention_mask, batch_size, num_stems),
+            self._repeat_for_stems(position_ids, batch_size, num_stems),
+            past_key_values,
+            output_attentions,
+            use_cache,
+            cache_position,
+            self._repeat_for_stems(encoder_hidden_states, batch_size, num_stems),
+            self._repeat_for_stems(encoder_attention_mask, batch_size, num_stems),
+            **flash_attn_kwargs,
+        )
+        stem_hidden_states = layer_outputs[0].reshape(batch_size, num_stems, seq_len, hidden_size)
+        return stem_hidden_states, layer_outputs
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -1321,6 +1525,10 @@ class AceStepDiTModel(AceStepPreTrainedModel):
         return_hidden_states: int = None,
         custom_layers_config: Optional[dict] = None,
         enable_early_exit: bool = False,
+        joint_frontend: bool = False,
+        target_stem_id: Union[int, torch.Tensor] = 0,
+        multi_stem_hidden_states: Optional[torch.Tensor] = None,
+        multi_stem_context_latents: Optional[torch.Tensor] = None,
         **flash_attn_kwargs: Unpack[FlashAttentionKwargs],
     ):
 
@@ -1347,26 +1555,43 @@ class AceStepDiTModel(AceStepPreTrainedModel):
         temb = temb_t + temb_r
         timestep_proj = timestep_proj_t + timestep_proj_r
 
-        # Concatenate context latents (source latents + chunk masks) with hidden states
-        hidden_states = torch.cat([context_latents, hidden_states], dim=-1)
+        use_joint_frontend = joint_frontend or multi_stem_context_latents is not None or multi_stem_hidden_states is not None
+        if use_joint_frontend:
+            hidden_states, target_stem_id = self._prepare_joint_frontend_inputs(
+                hidden_states=hidden_states,
+                context_latents=context_latents,
+                multi_stem_hidden_states=multi_stem_hidden_states,
+                multi_stem_context_latents=multi_stem_context_latents,
+                target_stem_id=target_stem_id,
+            )
+        else:
+            # Concatenate context latents (source latents + chunk masks) with hidden states
+            hidden_states = torch.cat([context_latents, hidden_states], dim=-1)
         # Record original sequence length for later restoration after padding
-        original_seq_len = hidden_states.shape[1]
+        original_seq_len = hidden_states.shape[2] if use_joint_frontend else hidden_states.shape[1]
         # Apply padding if sequence length is not divisible by patch_size
         # This ensures proper patch extraction
         pad_length = 0
-        if hidden_states.shape[1] % self.patch_size != 0:
-            pad_length = self.patch_size - (hidden_states.shape[1] % self.patch_size)
+        if original_seq_len % self.patch_size != 0:
+            pad_length = self.patch_size - (original_seq_len % self.patch_size)
             hidden_states = F.pad(hidden_states, (0, 0, 0, pad_length), mode='constant', value=0)
 
         # Project input to patches and project encoder states
-        hidden_states = self.proj_in(hidden_states)
+        if use_joint_frontend:
+            bsz, num_stems, padded_seq_len, input_dim = hidden_states.shape
+            hidden_states = hidden_states.reshape(bsz * num_stems, padded_seq_len, input_dim)
+            hidden_states = self.proj_in(hidden_states)
+            hidden_states = hidden_states.reshape(bsz, num_stems, hidden_states.shape[1], hidden_states.shape[2])
+        else:
+            hidden_states = self.proj_in(hidden_states)
         encoder_hidden_states = self.condition_embedder(encoder_hidden_states)
+        projected_seq_len = hidden_states.shape[2] if use_joint_frontend else hidden_states.shape[1]
         
         # Cache positions
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             cache_position = torch.arange(
-                past_seen_tokens, past_seen_tokens + hidden_states.shape[1], device=hidden_states.device
+                past_seen_tokens, past_seen_tokens + projected_seq_len, device=hidden_states.device
             )
         
         # Position IDs
@@ -1374,7 +1599,7 @@ class AceStepDiTModel(AceStepPreTrainedModel):
             position_ids = cache_position.unsqueeze(0)
 
 
-        seq_len = hidden_states.shape[1]
+        seq_len = projected_seq_len
         encoder_seq_len = encoder_hidden_states.shape[1]
         dtype = hidden_states.dtype
         device = hidden_states.device
@@ -1451,7 +1676,8 @@ class AceStepDiTModel(AceStepPreTrainedModel):
         }
 
         # Create position embeddings to be shared across all decoder layers
-        position_embeddings = self.rotary_emb(hidden_states, position_ids)
+        position_source = hidden_states[:, 0] if use_joint_frontend else hidden_states
+        position_embeddings = self.rotary_emb(position_source, position_ids)
         all_cross_attentions = () if output_attentions else None
 
         # Handle early exit for custom layer configurations
@@ -1463,8 +1689,31 @@ class AceStepDiTModel(AceStepPreTrainedModel):
             if all_cross_attentions is None:
                 all_cross_attentions = ()
 
+        start_layer = 0
+        if use_joint_frontend:
+            hidden_states = self.multi_stem_frontend.add_stem_embedding(hidden_states)
+            hidden_states, layer_outputs = self._run_shared_block1_for_stems(
+                hidden_states=hidden_states,
+                position_embeddings=position_embeddings,
+                timestep_proj=timestep_proj,
+                attention_mask=self_attn_mask_mapping[self.layers[0].attention_type],
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+                cache_position=cache_position,
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_attention_mask=self_attn_mask_mapping["encoder_attention_mask"],
+                **flash_attn_kwargs,
+            )
+            hidden_states = self.multi_stem_frontend.cross_stem_attention(hidden_states)
+            hidden_states = self.multi_stem_frontend.select_target_stem(hidden_states, target_stem_id)
+            if output_attentions and self.layers[0].use_cross_attention and len(layer_outputs) >= 3:
+                all_cross_attentions += (layer_outputs[2],)
+            start_layer = 1
+
         # Process through transformer layers
-        for index_block, layer_module in enumerate(self.layers):
+        for index_block, layer_module in enumerate(self.layers[start_layer:], start=start_layer):
 
             layer_outputs = layer_module(
                 hidden_states,
@@ -1698,6 +1947,34 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
         context_latents = torch.cat([src_latents, chunk_masks.to(dtype)], dim=-1)
         return encoder_hidden_states, encoder_attention_mask, context_latents
 
+    @staticmethod
+    def prepare_multi_stem_context_latents(
+        multi_stem_src_latents: Optional[torch.FloatTensor],
+        multi_stem_chunk_masks: Optional[torch.Tensor] = None,
+    ) -> Optional[torch.FloatTensor]:
+        if multi_stem_src_latents is None:
+            return None
+        if multi_stem_src_latents.ndim != 4:
+            raise ValueError(
+                "multi_stem_src_latents must have shape [B, 4, T, C_audio], "
+                f"got {tuple(multi_stem_src_latents.shape)}"
+            )
+        if multi_stem_chunk_masks is None:
+            multi_stem_chunk_masks = torch.ones_like(multi_stem_src_latents)
+        elif multi_stem_chunk_masks.ndim == 3:
+            multi_stem_chunk_masks = multi_stem_chunk_masks.unsqueeze(-1).expand_as(multi_stem_src_latents)
+        elif multi_stem_chunk_masks.ndim == 4 and multi_stem_chunk_masks.shape[-1] == 1:
+            multi_stem_chunk_masks = multi_stem_chunk_masks.expand_as(multi_stem_src_latents)
+        elif multi_stem_chunk_masks.shape != multi_stem_src_latents.shape:
+            raise ValueError(
+                "multi_stem_chunk_masks must have shape [B, 4, T] or [B, 4, T, C_audio], "
+                f"got {tuple(multi_stem_chunk_masks.shape)}"
+            )
+        return torch.cat(
+            [multi_stem_src_latents, multi_stem_chunk_masks.to(dtype=multi_stem_src_latents.dtype)],
+            dim=-1,
+        )
+
     def forward(
         self,
         # Diffusion inputs
@@ -1718,6 +1995,11 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
         is_covers: torch.Tensor = None,
         silence_latent: torch.FloatTensor = None,
         cfg_ratio: float = 0.15,
+        joint_frontend: bool = False,
+        target_stem_id: Union[int, torch.Tensor] = 0,
+        multi_stem_src_latents: Optional[torch.FloatTensor] = None,
+        multi_stem_chunk_masks: Optional[torch.Tensor] = None,
+        multi_stem_hidden_states: Optional[torch.FloatTensor] = None,
     ):
         """
         Forward pass for training (computes training losses).
@@ -1747,6 +2029,10 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
         ).view(-1, 1, 1)
         # Replace dropped conditions with null condition embedding
         encoder_hidden_states = torch.where(full_cfg_condition_mask > 0, encoder_hidden_states, self.null_condition_emb.expand_as(encoder_hidden_states))
+        multi_stem_context_latents = self.prepare_multi_stem_context_latents(
+            multi_stem_src_latents,
+            multi_stem_chunk_masks,
+        )
 
         # Flow matching setup: sample noise x1 and interpolate with data x0
         x1 = torch.randn_like(hidden_states)  # Noise
@@ -1766,6 +2052,10 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
             encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=encoder_attention_mask,
             context_latents=context_latents,
+            joint_frontend=joint_frontend,
+            target_stem_id=target_stem_id,
+            multi_stem_hidden_states=multi_stem_hidden_states,
+            multi_stem_context_latents=multi_stem_context_latents,
         )
         # Flow matching loss: predict the flow field v = x1 - x0
         flow = x1 - x0
@@ -1776,6 +2066,16 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
         
     def training_losses(self, **kwargs):
         return self.forward(**kwargs)
+
+    def enable_multi_stem_adapter_training(self) -> List[str]:
+        """Freeze ACE-Step and enable gradients only for the new multi-stem frontend."""
+        for parameter in self.parameters():
+            parameter.requires_grad = False
+        trainable_names = []
+        for name, parameter in self.decoder.multi_stem_frontend.named_parameters():
+            parameter.requires_grad = True
+            trainable_names.append(f"decoder.multi_stem_frontend.{name}")
+        return trainable_names
     
     def prepare_noise(self, context_latents: torch.FloatTensor, seed: Union[int, List[int], None] = None):
         """
@@ -1874,6 +2174,11 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
         non_cover_text_attention_mask: Optional[torch.FloatTensor] = None,
         precomputed_lm_hints_25Hz: Optional[torch.FloatTensor] = None,
         audio_codes: Optional[torch.FloatTensor] = None,
+        joint_frontend: bool = False,
+        target_stem_id: Union[int, torch.Tensor] = 0,
+        multi_stem_src_latents: Optional[torch.FloatTensor] = None,
+        multi_stem_chunk_masks: Optional[torch.Tensor] = None,
+        multi_stem_hidden_states: Optional[torch.FloatTensor] = None,
         shift: float = 3.0,
         timesteps: Optional[torch.Tensor] = None,
         cover_noise_strength: float = 0.0,
@@ -2009,6 +2314,10 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
             precomputed_lm_hints_25Hz=precomputed_lm_hints_25Hz,
             audio_codes=audio_codes,
         )
+        multi_stem_context_latents = self.prepare_multi_stem_context_latents(
+            multi_stem_src_latents,
+            multi_stem_chunk_masks,
+        )
         
         encoder_hidden_states_non_cover, encoder_attention_mask_non_cover, context_latents_non_cover = None, None, None
         if audio_cover_strength < 1.0:
@@ -2110,6 +2419,10 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
                     encoder_hidden_states=encoder_hidden_states,
                     encoder_attention_mask=encoder_attention_mask,
                     context_latents=context_latents,
+                    joint_frontend=joint_frontend,
+                    target_stem_id=target_stem_id,
+                    multi_stem_hidden_states=multi_stem_hidden_states,
+                    multi_stem_context_latents=multi_stem_context_latents,
                     use_cache=True,
                     past_key_values=past_key_values,
                 )
@@ -2171,6 +2484,10 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
                         encoder_hidden_states=encoder_hidden_states,
                         encoder_attention_mask=encoder_attention_mask,
                         context_latents=context_latents,
+                        joint_frontend=joint_frontend,
+                        target_stem_id=target_stem_id,
+                        multi_stem_hidden_states=multi_stem_hidden_states,
+                        multi_stem_context_latents=multi_stem_context_latents,
                         use_cache=False,
                         past_key_values=corrector_kv,
                     )

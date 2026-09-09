@@ -53,6 +53,9 @@ class GenerateMusicExecuteMixin:
         flow_edit_n_min: float = 0.0,
         flow_edit_n_max: float = 1.0,
         flow_edit_n_avg: int = 1,
+        joint_frontend: bool = False,
+        target_stem_id: Any = 0,
+        multi_stem_target_wavs: Any = None,
     ) -> Dict[str, Any]:
         """Invoke ``service_generate`` while maintaining background progress estimation.
 
@@ -121,6 +124,9 @@ class GenerateMusicExecuteMixin:
                     flow_edit_n_min=flow_edit_n_min,
                     flow_edit_n_max=flow_edit_n_max,
                     flow_edit_n_avg=flow_edit_n_avg,
+                    joint_frontend=joint_frontend,
+                    target_stem_id=target_stem_id,
+                    multi_stem_target_wavs=multi_stem_target_wavs,
                 )
             except Exception as exc:
                 _error["exc"] = exc

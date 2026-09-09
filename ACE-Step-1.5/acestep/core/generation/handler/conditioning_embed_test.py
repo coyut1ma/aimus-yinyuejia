@@ -105,9 +105,11 @@ class ConditioningEmbedMixinTests(unittest.TestCase):
             "precomputed_lm_hints_25Hz": None,
             "non_cover_text_input_ids": None,
             "non_cover_text_attention_masks": None,
+            "multi_stem_src_latents": None,
+            "multi_stem_chunk_masks": None,
         }
         result = host.preprocess_batch(batch)
-        self.assertEqual(len(result), 20)
+        self.assertEqual(len(result), 22)
         self.assertEqual(result[0], ["k1", "k2"])
         self.assertEqual(result[3].shape, (2, 128, 6))
 

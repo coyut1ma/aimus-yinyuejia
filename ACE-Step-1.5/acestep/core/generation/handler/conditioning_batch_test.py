@@ -51,6 +51,16 @@ class _Host(ConditioningBatchMixin):
         silence_latent_tiled = torch.zeros(128, 16, dtype=torch.float32)
         return target_wavs, target_latents, latent_masks, 128, silence_latent_tiled
 
+    def _prepare_multi_stem_latents(
+        self,
+        multi_stem_target_wavs: Optional[torch.Tensor],
+        batch_size: int,
+        max_latent_length: int,
+    ) -> Optional[torch.Tensor]:
+        if multi_stem_target_wavs is None:
+            return None
+        return torch.zeros(batch_size, 4, max_latent_length, 16, dtype=torch.float32)
+
     def _build_chunk_masks_and_src_latents(
         self,
         batch_size: int,
@@ -127,6 +137,7 @@ class ConditioningBatchMixinTests(unittest.TestCase):
 
         self.assertIn("target_latents", batch)
         self.assertIn("chunk_masks", batch)
+        self.assertIn("multi_stem_src_latents", batch)
         self.assertIn("text_token_idss", batch)
         self.assertIn("refer_audioss", batch)
         self.assertEqual(batch["target_latents"].dtype, torch.float32)
@@ -134,6 +145,18 @@ class ConditioningBatchMixinTests(unittest.TestCase):
         self.assertEqual(len(batch["refer_audioss"]), 2)
         self.assertEqual(batch["refer_audioss"][0][0].shape, (2, 30 * host.sample_rate))
         self.assertEqual(host.seen_task_type, "cover-nofsq")
+
+    def test_prepare_batch_adds_multi_stem_latents_when_four_stems_are_provided(self):
+        host = _Host()
+        batch = host._prepare_batch(
+            captions=["c1"],
+            lyrics=["l1"],
+            target_wavs=torch.zeros(1, 2, 96000),
+            multi_stem_target_wavs=torch.zeros(1, 4, 2, 96000),
+        )
+
+        self.assertEqual(batch["multi_stem_src_latents"].shape, (1, 4, 128, 16))
+        self.assertEqual(batch["multi_stem_chunk_masks"].shape, (1, 4, 128))
 
     def test_prepare_batch_populates_non_cover_inputs_when_strength_below_one(self):
         """Populate optional non-cover token fields for blended cover path."""

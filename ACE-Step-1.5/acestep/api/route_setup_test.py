@@ -16,6 +16,7 @@ class RouteSetupTests(unittest.TestCase):
 
     @patch("acestep.api.route_setup.register_query_result_route")
     @patch("acestep.api.route_setup.register_release_task_route")
+    @patch("acestep.api.route_setup.register_repaint_route")
     @patch("acestep.api.route_setup.register_audio_route")
     @patch("acestep.api.route_setup.register_training_api_routes")
     @patch("acestep.api.route_setup.register_reinitialize_route")
@@ -32,6 +33,7 @@ class RouteSetupTests(unittest.TestCase):
         mock_register_reinitialize_route,
         mock_register_training_api_routes,
         mock_register_audio_route,
+        mock_register_repaint_route,
         mock_register_release_task_route,
         mock_register_query_result_route,
     ) -> None:
@@ -85,6 +87,7 @@ class RouteSetupTests(unittest.TestCase):
         mock_register_reinitialize_route.assert_called_once()
         mock_register_training_api_routes.assert_called_once()
         mock_register_audio_route.assert_called_once()
+        mock_register_repaint_route.assert_called_once()
         mock_register_release_task_route.assert_called_once()
         mock_register_query_result_route.assert_called_once()
 

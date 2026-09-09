@@ -146,6 +146,23 @@ class ServiceGenerateMixinTests(unittest.TestCase):
         self.assertEqual(execute_kwargs["shift"], 1.3)
         self.assertEqual(execute_kwargs["audio_cover_strength"], 0.7)
 
+    def test_service_generate_forwards_joint_frontend_inputs(self):
+        """It forwards multi-stem controls to batch preparation and model kwargs."""
+        host = _Host()
+        multi_stem_target_wavs = object()
+        host.service_generate(
+            captions="cap",
+            lyrics="lyr",
+            joint_frontend=True,
+            target_stem_id=2,
+            multi_stem_target_wavs=multi_stem_target_wavs,
+        )
+
+        self.assertIs(host.calls["_prepare_batch"]["multi_stem_target_wavs"], multi_stem_target_wavs)
+        build_kwargs = host.calls["_build_service_generate_kwargs"]
+        self.assertTrue(build_kwargs["joint_frontend"])
+        self.assertEqual(build_kwargs["target_stem_id"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -14,8 +14,8 @@ class ConditioningBatchMixin:
     - Attributes: ``device``, ``dtype``, ``sample_rate``.
     - Methods: ``_normalize_audio_code_hints``, ``_create_fallback_vocal_languages``,
       ``_parse_metas``, ``_normalize_instructions``, ``_prepare_target_latents_and_wavs``,
-      ``_build_chunk_masks_and_src_latents``, ``_prepare_precomputed_lm_hints``,
-      ``_prepare_text_conditioning_inputs``.
+      ``_prepare_multi_stem_latents``, ``_build_chunk_masks_and_src_latents``,
+      ``_prepare_precomputed_lm_hints``, ``_prepare_text_conditioning_inputs``.
     """
 
     def _prepare_batch(
@@ -37,6 +37,7 @@ class ConditioningBatchMixin:
         chunk_mask_modes: Optional[List[str]] = None,
         task_type: str = "",
         source_repaint_latents: Optional[torch.Tensor] = None,
+        multi_stem_target_wavs: Optional[torch.Tensor] = None,
     ) -> Dict[str, Any]:
         """Prepare model-ready conditioning batch tensors and metadata.
 
@@ -56,6 +57,8 @@ class ConditioningBatchMixin:
             task_type: Generation task selector forwarded to mask preparation.
             source_repaint_latents: Optional cached source latents for
                 generated-source repaint, bypassing repaint-time VAE encoding.
+            multi_stem_target_wavs: Optional four-stem audio tensor shaped
+                ``[B, 4, C, samples]`` for the joint frontend.
 
         Returns:
             Batch dictionary containing padded tensors and conditioning metadata
@@ -103,6 +106,16 @@ class ConditioningBatchMixin:
             chunk_mask_modes=chunk_mask_modes,
             task_type=task_type,
         )
+        multi_stem_src_latents = self._prepare_multi_stem_latents(
+            multi_stem_target_wavs,
+            batch_size,
+            max_latent_length,
+        )
+        multi_stem_chunk_masks = None
+        if multi_stem_src_latents is not None:
+            multi_stem_chunk_masks = chunk_masks.unsqueeze(1).expand(
+                -1, multi_stem_src_latents.shape[1], -1
+            ).clone()
         precomputed_lm_hints_25hz = self._prepare_precomputed_lm_hints(
             batch_size, audio_code_hints, max_latent_length, silence_latent_tiled
         )
@@ -139,6 +152,8 @@ class ConditioningBatchMixin:
             "src_latents": src_latents,
             "latent_masks": latent_masks,
             "chunk_masks": chunk_masks,
+            "multi_stem_src_latents": multi_stem_src_latents,
+            "multi_stem_chunk_masks": multi_stem_chunk_masks,
             "spans": spans,
             "text_inputs": text_inputs,
             "text_token_idss": padded_text_token_idss,

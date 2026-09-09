@@ -65,6 +65,9 @@ class ServiceGenerateMixin:
         flow_edit_n_min: float = 0.0,
         flow_edit_n_max: float = 1.0,
         flow_edit_n_avg: int = 1,
+        joint_frontend: bool = False,
+        target_stem_id: Any = 0,
+        multi_stem_target_wavs: Optional[torch.Tensor] = None,
     ) -> Dict[str, Any]:
         """Generate music latents and metadata from text/audio conditioning inputs.
 
@@ -117,6 +120,7 @@ class ServiceGenerateMixin:
             chunk_mask_modes=chunk_mask_modes,
             task_type=task_type,
             source_repaint_latents=source_repaint_latents,
+            multi_stem_target_wavs=multi_stem_target_wavs,
         )
         payload = self._unpack_service_processed_data(self.preprocess_batch(batch))
         seed_param = self._resolve_service_seed_param(normalized["seed_list"])
@@ -146,6 +150,8 @@ class ServiceGenerateMixin:
             dcw_wavelet=dcw_wavelet,
             retake_seed=retake_seed,
             retake_variance=retake_variance,
+            joint_frontend=joint_frontend,
+            target_stem_id=target_stem_id,
         )
         # flow_edit_ctx activates the V_delta overlay.  Supported on
         # text2music (silence-derived context, clean text-driven V_delta)
