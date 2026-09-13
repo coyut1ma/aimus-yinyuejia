@@ -19,6 +19,7 @@ from .models import (
     PlanStatus,
     Stem,
 )
+from .musecpeval_adapter import build_musecpeval_manifest, run_musecpeval_batch
 from .musdb import MusdbTrack, import_track, inspect_container, scan_musdb
 from .parser import ControlledInstructionParser, InstructionParser, QwenInstructionParser
 from .pilot_tasks import (
@@ -51,7 +52,10 @@ def build_generator(settings: Settings) -> GeneratorBackend:
     if settings.generator_backend == "fake":
         return FakeGenerator()
     if settings.generator_backend == "ace_step_http":
-        return AceStepHttpGenerator(settings.ace_step_base_url)
+        return AceStepHttpGenerator(
+            settings.ace_step_base_url,
+            cross_stem_attention=settings.ace_step_cross_stem_attention,
+        )
     raise ValueError(f"unknown generator backend: {settings.generator_backend}")
 
 
@@ -270,6 +274,68 @@ class DemoService:
                 output.parent.mkdir(parents=True, exist_ok=True)
                 output.write_text(json.dumps(reports, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return reports[0] if len(reports) == 1 else reports
+
+    def build_musecpeval_manifest(
+        self,
+        job_id: str,
+        seed: int | None = None,
+        all_candidates: bool = False,
+        include_target_stems: bool = False,
+        output: Path | None = None,
+    ) -> list[dict[str, object]]:
+        job = self.get_job(job_id)
+        if job.status != JobStatus.SUCCEEDED:
+            raise ValueError(f"job has no result: {job.status.value}")
+        result = self.get_result(job_id)
+        plan = self.repository.get_plan(result.plan_id)
+        project = self.repository.get_project(result.project_id)
+        return build_musecpeval_manifest(
+            project,
+            plan,
+            result,
+            self.repository.artifacts_dir(job_id),
+            seed=seed,
+            all_candidates=all_candidates,
+            include_target_stems=include_target_stems,
+            output=output,
+        )
+
+    def run_musecpeval(
+        self,
+        job_id: str,
+        seed: int | None = None,
+        all_candidates: bool = False,
+        include_target_stems: bool = False,
+        output_dir: Path | None = None,
+        metrics: list[str] | None = None,
+        no_parallel: bool = False,
+        limit: int | None = None,
+    ) -> dict[str, object]:
+        root = self.settings.runtime_dir / "musecpeval" / job_id
+        manifest = root / "pairs.json"
+        pairs = self.build_musecpeval_manifest(
+            job_id,
+            seed=seed,
+            all_candidates=all_candidates,
+            include_target_stems=include_target_stems,
+            output=manifest,
+        )
+        destination = output_dir or (root / "results")
+        exit_code = run_musecpeval_batch(
+            manifest,
+            destination,
+            metrics=metrics or ("harmony", "rhythm", "melody", "timbre"),
+            no_parallel=no_parallel,
+            limit=limit,
+        )
+        return {
+            "schema_version": "musecpeval_run.v1",
+            "job_id": job_id,
+            "manifest": str(manifest.resolve()),
+            "output_dir": str(destination.resolve()),
+            "pairs": len(pairs),
+            "exit_code": exit_code,
+        }
 
     def get_result_file(self, job_id: str, seed: int, kind: str, stem: Stem | None = None) -> Path:
         result = self.get_result(job_id)

@@ -122,11 +122,12 @@ class AceStepHttpGenerator:
 
     name = "ace-step-http"
 
-    def __init__(self, base_url: str, timeout_sec: int = 600):
+    def __init__(self, base_url: str, timeout_sec: int = 600, cross_stem_attention: bool = True):
         if not base_url:
             raise ValueError("ACE_STEP_BASE_URL is required for ace_step_http")
         self.base_url = base_url.rstrip("/")
         self.timeout_sec = timeout_sec
+        self.cross_stem_attention = cross_stem_attention
 
     def health(self) -> dict[str, object]:
         request = urllib.request.Request(f"{self.base_url}/health", method="GET")
@@ -149,6 +150,7 @@ class AceStepHttpGenerator:
             "targets": [target.model_dump(mode="json") for target in plan.targets],
             "target_stems": [target.stem.value for target in plan.targets],
             "joint_frontend": True,
+            "cross_stem_attention": self.cross_stem_attention,
             "prompt": plan.generator_prompt,
             "preserve": plan.preserve,
             "seeds": plan.seeds,

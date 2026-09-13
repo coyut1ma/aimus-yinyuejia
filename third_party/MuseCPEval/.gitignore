@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.wav
+*.ipynb
+__pycache__/
+*.pyc
+*.wav
+*.ipynb
+*.jams
+results/
+*.egg-info/
+dist/
+build/

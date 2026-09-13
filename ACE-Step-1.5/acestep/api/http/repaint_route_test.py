@@ -61,6 +61,7 @@ class RepaintRouteTests(unittest.TestCase):
                 "seeds": [123],
                 "output_dir": str(output_dir),
                 "joint_frontend": True,
+                "cross_stem_attention": False,
             })
 
             body = asyncio.run(endpoint(payload, None))
@@ -70,6 +71,7 @@ class RepaintRouteTests(unittest.TestCase):
         self.assertEqual(len(handler.generate_calls), 1)
         call = handler.generate_calls[0]
         self.assertTrue(call["joint_frontend"])
+        self.assertFalse(call["cross_stem_attention"])
         self.assertEqual(call["target_stem_id"], 2)
         self.assertEqual(tuple(call["multi_stem_target_wavs"].shape), (1, 4, 2, 32))
         self.assertEqual(call["task_type"], "repaint")

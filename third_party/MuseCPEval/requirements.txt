@@ -1,0 +1,9 @@
+# pyproject.toml is canonical; this file mirrors it for `pip install -r`.
+# numpy is capped because librosa needs numba, and numba refuses newer numpy.
+numpy>=1.23,<2.3
+scipy>=1.9
+librosa>=0.10
+soundfile>=0.12
+mir_eval>=0.7
+# required by the structure metric only (pip install ".[structure]")
+msaf>=0.1.80

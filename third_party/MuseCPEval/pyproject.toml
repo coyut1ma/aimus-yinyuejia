@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=77"]  # PEP 639 license expression support
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "musecpeval"
+version = "0.3.0"
+description = "Music context preservation metrics: how much of an original's harmony, rhythm, structure, melody, and timbre survives an edit"
+readme = "README.md"
+authors = [{ name = "Yash Vishe", email = "yashvisheyav@gmail.com" }]
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+keywords = ["music", "mir", "audio", "evaluation", "metrics"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+    "Intended Audience :: Science/Research",
+]
+
+# numpy is capped because librosa depends on numba, and numba refuses newer numpy.
+dependencies = [
+    "numpy>=1.23,<2.3",
+    "scipy>=1.9",
+    "librosa>=0.10",
+    "soundfile>=0.12",
+    "mir_eval>=0.7",
+]
+
+[project.optional-dependencies]
+# Required by the `structure` metric family only; the other three run without it.
+structure = ["msaf>=0.1.80"]
+
+[project.scripts]
+musecpeval = "musecpeval.runner:main"
+
+[project.urls]
+Homepage = "https://github.com/Yashvishe13/MuseCPEval"
+Repository = "https://github.com/Yashvishe13/MuseCPEval"
+Issues = "https://github.com/Yashvishe13/MuseCPEval/issues"
+
+[tool.setuptools.packages.find]
+include = ["musecpeval*"]

@@ -154,6 +154,37 @@ def _cmd_evaluate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_musecpeval_manifest(args: argparse.Namespace) -> int:
+    service = _service()
+    output = Path(args.output).resolve() if args.output else None
+    pairs = service.build_musecpeval_manifest(
+        args.job_id,
+        seed=args.seed,
+        all_candidates=args.all_candidates,
+        include_target_stems=args.include_target_stems,
+        output=output,
+    )
+    _print_model({"pairs": pairs, "output": str(output) if output else None})
+    return 0
+
+
+def _cmd_musecpeval_run(args: argparse.Namespace) -> int:
+    service = _service()
+    output_dir = Path(args.output_dir).resolve() if args.output_dir else None
+    report = service.run_musecpeval(
+        args.job_id,
+        seed=args.seed,
+        all_candidates=args.all_candidates,
+        include_target_stems=args.include_target_stems,
+        output_dir=output_dir,
+        metrics=args.metrics,
+        no_parallel=args.no_parallel,
+        limit=args.limit,
+    )
+    _print_model(report)
+    return int(report["exit_code"])
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     try:
         import uvicorn
@@ -248,6 +279,45 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--all", dest="all_candidates", action="store_true", help="Evaluate every candidate")
     evaluate.add_argument("--output", help="Write the JSON report to this path")
     evaluate.set_defaults(handler=_cmd_evaluate)
+
+    musecpeval_manifest = subparsers.add_parser(
+        "musecpeval-manifest",
+        help="Build MuseCPEval ref/est pairs for a completed edit job",
+    )
+    musecpeval_manifest.add_argument("--job-id", required=True)
+    musecpeval_manifest.add_argument("--seed", type=int, help="Candidate seed; defaults to the selected candidate")
+    musecpeval_manifest.add_argument("--all", dest="all_candidates", action="store_true", help="Include every candidate")
+    musecpeval_manifest.add_argument(
+        "--include-target-stems",
+        action="store_true",
+        help="Also compare each edited target stem against its original stem",
+    )
+    musecpeval_manifest.add_argument("--output", help="Write the JSON pair manifest to this path")
+    musecpeval_manifest.set_defaults(handler=_cmd_musecpeval_manifest)
+
+    musecpeval_run = subparsers.add_parser(
+        "musecpeval-run",
+        help="Run the downloaded MuseCPEval package on a completed edit job",
+    )
+    musecpeval_run.add_argument("--job-id", required=True)
+    musecpeval_run.add_argument("--seed", type=int, help="Candidate seed; defaults to the selected candidate")
+    musecpeval_run.add_argument("--all", dest="all_candidates", action="store_true", help="Evaluate every candidate")
+    musecpeval_run.add_argument(
+        "--include-target-stems",
+        action="store_true",
+        help="Also compare each edited target stem against its original stem",
+    )
+    musecpeval_run.add_argument(
+        "--metrics",
+        nargs="+",
+        default=["harmony", "rhythm", "melody", "timbre"],
+        choices=["harmony", "rhythm", "melody", "timbre", "structure"],
+        help="MuseCPEval metric families; structure additionally requires msaf",
+    )
+    musecpeval_run.add_argument("--output-dir", help="Directory for MuseCPEval results")
+    musecpeval_run.add_argument("--no-parallel", action="store_true", help="Run MuseCPEval serially")
+    musecpeval_run.add_argument("--limit", type=int, help="Only score the first N pairs")
+    musecpeval_run.set_defaults(handler=_cmd_musecpeval_run)
 
     serve = subparsers.add_parser("serve", help="Start the FastAPI service")
     serve.add_argument("--host", default="127.0.0.1")

@@ -66,6 +66,7 @@ class ServiceGenerateMixin:
         flow_edit_n_max: float = 1.0,
         flow_edit_n_avg: int = 1,
         joint_frontend: bool = False,
+        cross_stem_attention: bool = True,
         target_stem_id: Any = 0,
         multi_stem_target_wavs: Optional[torch.Tensor] = None,
     ) -> Dict[str, Any]:
@@ -151,6 +152,7 @@ class ServiceGenerateMixin:
             retake_seed=retake_seed,
             retake_variance=retake_variance,
             joint_frontend=joint_frontend,
+            cross_stem_attention=cross_stem_attention,
             target_stem_id=target_stem_id,
         )
         # flow_edit_ctx activates the V_delta overlay.  Supported on

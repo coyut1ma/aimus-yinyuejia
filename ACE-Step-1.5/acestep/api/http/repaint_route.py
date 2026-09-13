@@ -32,6 +32,7 @@ class RepaintRequest(BaseModel):
     seeds: List[int] = Field(default_factory=list)
     output_dir: str
     joint_frontend: bool = True
+    cross_stem_attention: bool = True
     inference_steps: int = 8
     repaint_mode: str = "balanced"
     repaint_strength: float = 0.5
@@ -120,6 +121,7 @@ def register_repaint_route(
                     seed=seed,
                     batch_size=1,
                     joint_frontend=req.joint_frontend,
+                    cross_stem_attention=req.cross_stem_attention,
                     target_stem_id=STEM_TO_ID[stem],
                     multi_stem_target_wavs=multi_stem_target_wavs,
                     repaint_mode=req.repaint_mode,
@@ -139,7 +141,13 @@ def register_repaint_route(
             candidates.append(
                 {
                     "seed": seed,
-                    "backend": "ace-step-joint-frontend" if req.joint_frontend else "ace-step",
+                    "backend": (
+                        "ace-step-joint-frontend"
+                        if req.joint_frontend and req.cross_stem_attention
+                        else "ace-step-joint-no-cross-stem"
+                        if req.joint_frontend
+                        else "ace-step"
+                    ),
                     "generated_targets": generated_targets,
                 }
             )

@@ -126,6 +126,7 @@ class ServiceGenerateExecuteMixin:
         retake_seed: Any = None,
         retake_variance: float = 0.0,
         joint_frontend: bool = False,
+        cross_stem_attention: bool = True,
         target_stem_id: Any = 0,
     ) -> Dict[str, Any]:
         """Build kwargs passed to model generation backends."""
@@ -171,6 +172,7 @@ class ServiceGenerateExecuteMixin:
             "retake_seed": retake_seed,
             "retake_variance": retake_variance,
             "joint_frontend": bool(joint_frontend or payload.get("multi_stem_src_latents") is not None),
+            "cross_stem_attention": cross_stem_attention,
             "target_stem_id": target_stem_id,
             "multi_stem_src_latents": payload.get("multi_stem_src_latents"),
             "multi_stem_chunk_masks": payload.get("multi_stem_chunk_masks"),

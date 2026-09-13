@@ -101,6 +101,30 @@ class MultiStemFrontendTests(unittest.TestCase):
         self.assertEqual(single.shape, joint.shape)
         self.assertTrue(torch.allclose(single, joint, atol=1e-5, rtol=1e-5))
 
+    def test_joint_frontend_can_skip_cross_stem_attention(self):
+        torch.manual_seed(0)
+        model = AceStepDiTModel(_tiny_config()).eval()
+        inputs = _decoder_inputs()
+
+        with torch.no_grad():
+            output = model(
+                inputs["hidden_states"],
+                inputs["timestep"],
+                inputs["timestep_r"],
+                inputs["attention_mask"],
+                inputs["encoder_hidden_states"],
+                inputs["encoder_attention_mask"],
+                inputs["context_latents"],
+                use_cache=False,
+                joint_frontend=True,
+                cross_stem_attention=False,
+                target_stem_id=inputs["target_stem_id"],
+                multi_stem_hidden_states=inputs["multi_stem_hidden_states"],
+                multi_stem_context_latents=inputs["multi_stem_context_latents"],
+            )[0]
+
+        self.assertEqual(output.shape, inputs["hidden_states"].shape)
+
     def test_joint_frontend_accepts_sampler_cache(self):
         torch.manual_seed(0)
         model = AceStepDiTModel(_tiny_config()).eval()

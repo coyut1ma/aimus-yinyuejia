@@ -15,6 +15,7 @@ class Settings:
     qwen_api_key: str = ""
     qwen_model: str = "Qwen3-4B-Instruct"
     ace_step_base_url: str = ""
+    ace_step_cross_stem_attention: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -32,4 +33,6 @@ class Settings:
             qwen_api_key=os.getenv("QWEN_API_KEY", ""),
             qwen_model=os.getenv("QWEN_MODEL", "Qwen3-4B-Instruct"),
             ace_step_base_url=os.getenv("ACE_STEP_BASE_URL", "").rstrip("/"),
+            ace_step_cross_stem_attention=os.getenv("ACE_STEP_CROSS_STEM_ATTENTION", "1").lower()
+            not in {"0", "false", "no", "off"},
         )

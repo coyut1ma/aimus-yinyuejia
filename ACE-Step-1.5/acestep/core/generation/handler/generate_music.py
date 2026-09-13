@@ -247,6 +247,7 @@ class GenerateMusicMixin:
         flow_edit_n_max: float = 1.0,
         flow_edit_n_avg: int = 1,
         joint_frontend: bool = False,
+        cross_stem_attention: bool = True,
         target_stem_id: Any = 0,
         multi_stem_target_wavs: Optional[torch.Tensor] = None,
         progress=None,
@@ -279,6 +280,8 @@ class GenerateMusicMixin:
             source_repaint_latents: Optional cached source latents used for
                 generated-source repaint instead of repaint-time VAE encoding.
             joint_frontend: Enable the optional early multi-stem DiT frontend.
+            cross_stem_attention: Apply the cross-stem attention exchange inside
+                the joint frontend. Disable for a shared-block1 ablation.
             target_stem_id: Target stem index in the fixed order
                 vocals/drums/bass/other.
             multi_stem_target_wavs: Optional four-stem audio tensor shaped
@@ -444,6 +447,7 @@ class GenerateMusicMixin:
                 flow_edit_n_max=flow_edit_n_max,
                 flow_edit_n_avg=flow_edit_n_avg,
                 joint_frontend=joint_frontend,
+                cross_stem_attention=cross_stem_attention,
                 target_stem_id=target_stem_id,
                 multi_stem_target_wavs=multi_stem_target_wavs,
             )

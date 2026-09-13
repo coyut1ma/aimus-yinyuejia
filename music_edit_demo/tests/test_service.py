@@ -75,6 +75,32 @@ class DemoServiceTests(unittest.TestCase):
         self.assertIn("volume", evaluation["metrics"])
         self.assertEqual(evaluation["metrics"]["volume"]["good_threshold_db"], 3.0)
 
+    def test_builds_musecpeval_manifest(self) -> None:
+        plan = self.service.create_plan(
+            self.project.project_id,
+            3,
+            7,
+            "把鼓点加密，其他轨保持不变",
+        )
+        job = self.service.submit_job(plan.plan_id)
+        completed = self.service.run_job(job.job_id)
+        self.assertEqual(completed.status, JobStatus.SUCCEEDED, completed.error)
+
+        manifest_path = self.service.settings.runtime_dir / "musecpeval" / "pairs.json"
+        pairs = self.service.build_musecpeval_manifest(
+            job.job_id,
+            include_target_stems=True,
+            output=manifest_path,
+        )
+
+        self.assertEqual(len(pairs), 2)
+        self.assertEqual(pairs[0]["kind"], "mix")
+        self.assertTrue(Path(str(pairs[0]["ref"])).is_file())
+        self.assertTrue(Path(str(pairs[0]["est"])).is_file())
+        self.assertEqual(pairs[1]["kind"], "target_stem")
+        self.assertEqual(pairs[1]["stem"], "drums")
+        self.assertTrue(manifest_path.is_file())
+
     def test_requires_context(self) -> None:
         with self.assertRaisesRegex(ValueError, "context"):
             self.service.create_plan(

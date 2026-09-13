@@ -4,6 +4,7 @@
 
 - `ACE-Step-1.5/`：ACE-Step 1.5 源码、依赖配置、训练与服务入口。
 - `music_edit_demo/`：端到端多轨编辑 demo 的源码和测试。
+- `third_party/MuseCPEval/`：可选的音乐上下文保持评测工具。
 - `design_docs/`：多分枝第一版方案、结构报告和 benchmark 协议。
 - `research_notes/`：项目已有 Markdown 调研和汇报材料；PDF/PPTX 已排除。
 
@@ -26,6 +27,8 @@
 2. 下载所需 ACE-Step checkpoint，并按 ACE-Step 配置放置或指定模型路径。
 3. 将 MUSDB18 放到服务器数据盘，不要复制进源码目录。
 4. 通过环境变量把 demo 指向 MUSDB18 和 ACE-Step 服务。
+5. 如需 MuseCPEval 上下文保持评测，在 music 环境中执行
+   `python -m pip install -e ../third_party/MuseCPEval`。
 
 示例：
 
@@ -54,6 +57,36 @@ export ACE_STEP_BASE_URL=http://127.0.0.1:8000
 
 ```text
 design_docs/多分枝ACE-Step第一版设计方案及执行计划.md
+```
+
+## 多分枝消融对照
+
+若要运行“与多分枝第一版基本相同、但关闭 Cross-Stem Attention”的对照，使用同一个本地
+ACE-Step pilot repaint 脚本并增加 `--disable-cross-stem-attention`：
+
+```bash
+cd ACE-Step-1.5
+../.conda-env/bin/python scripts/run_multistem_pilot_repaint.py \
+  --manifest ../music_edit_demo/runtime_real/pilot_tasks_v1.jsonl \
+  --cache-root ../music_edit_demo/runtime_real/musdb_cache_fulltest_20260909 \
+  --output-dir ../outputs/multistem_adapter/pilot20_joint_no_cross_stem \
+  --adapter-checkpoint ../outputs/multistem_adapter/run_long_20260908_2125/adapter_latest.pt \
+  --disable-cross-stem-attention \
+  --evaluate
+```
+
+该路径仍使用四轨上下文、共享 Block 1、目标轨选择、同样的 splice/mix/evaluation；
+与多分枝第一版的主要差别是跳过 Cross-Stem Attention 残差交换。
+
+生成完成后，用 MuseCPEval 对比两个输出目录的编辑边界：
+
+```bash
+../.conda-env/bin/python scripts/compare_pilot_musecpeval_boundaries.py \
+  --left-root ../outputs/multistem_adapter/pilot20_joint_adapter_fulltest_20260909 \
+  --right-root ../outputs/multistem_adapter/pilot20_joint_no_cross_stem \
+  --left-label multibranch_v1 \
+  --right-label demo_no_cross_stem \
+  --output-dir ../outputs/musecpeval_boundary_compare_no_cross
 ```
 
 实施顺序：

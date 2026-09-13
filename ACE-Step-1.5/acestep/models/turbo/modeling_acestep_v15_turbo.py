@@ -1309,9 +1309,11 @@ class MultiStemFrontend(nn.Module):
         self,
         hidden_states: torch.Tensor,
         target_stem_id: Union[int, torch.Tensor],
+        cross_stem_attention: bool = True,
     ) -> torch.Tensor:
         hidden_states = self.add_stem_embedding(hidden_states)
-        hidden_states = self.cross_stem_attention(hidden_states)
+        if cross_stem_attention:
+            hidden_states = self.cross_stem_attention(hidden_states)
         return self.select_target_stem(hidden_states, target_stem_id)
 
 
@@ -1526,6 +1528,7 @@ class AceStepDiTModel(AceStepPreTrainedModel):
         custom_layers_config: Optional[dict] = None,
         enable_early_exit: bool = False,
         joint_frontend: bool = False,
+        cross_stem_attention: bool = True,
         target_stem_id: Union[int, torch.Tensor] = 0,
         multi_stem_hidden_states: Optional[torch.Tensor] = None,
         multi_stem_context_latents: Optional[torch.Tensor] = None,
@@ -1706,7 +1709,8 @@ class AceStepDiTModel(AceStepPreTrainedModel):
                 encoder_attention_mask=self_attn_mask_mapping["encoder_attention_mask"],
                 **flash_attn_kwargs,
             )
-            hidden_states = self.multi_stem_frontend.cross_stem_attention(hidden_states)
+            if cross_stem_attention:
+                hidden_states = self.multi_stem_frontend.cross_stem_attention(hidden_states)
             hidden_states = self.multi_stem_frontend.select_target_stem(hidden_states, target_stem_id)
             if output_attentions and self.layers[0].use_cross_attention and len(layer_outputs) >= 3:
                 all_cross_attentions += (layer_outputs[2],)
@@ -1996,6 +2000,7 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
         silence_latent: torch.FloatTensor = None,
         cfg_ratio: float = 0.15,
         joint_frontend: bool = False,
+        cross_stem_attention: bool = True,
         target_stem_id: Union[int, torch.Tensor] = 0,
         multi_stem_src_latents: Optional[torch.FloatTensor] = None,
         multi_stem_chunk_masks: Optional[torch.Tensor] = None,
@@ -2053,6 +2058,7 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
             encoder_attention_mask=encoder_attention_mask,
             context_latents=context_latents,
             joint_frontend=joint_frontend,
+            cross_stem_attention=cross_stem_attention,
             target_stem_id=target_stem_id,
             multi_stem_hidden_states=multi_stem_hidden_states,
             multi_stem_context_latents=multi_stem_context_latents,
@@ -2175,6 +2181,7 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
         precomputed_lm_hints_25Hz: Optional[torch.FloatTensor] = None,
         audio_codes: Optional[torch.FloatTensor] = None,
         joint_frontend: bool = False,
+        cross_stem_attention: bool = True,
         target_stem_id: Union[int, torch.Tensor] = 0,
         multi_stem_src_latents: Optional[torch.FloatTensor] = None,
         multi_stem_chunk_masks: Optional[torch.Tensor] = None,
@@ -2420,6 +2427,7 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
                     encoder_attention_mask=encoder_attention_mask,
                     context_latents=context_latents,
                     joint_frontend=joint_frontend,
+                    cross_stem_attention=cross_stem_attention,
                     target_stem_id=target_stem_id,
                     multi_stem_hidden_states=multi_stem_hidden_states,
                     multi_stem_context_latents=multi_stem_context_latents,
@@ -2485,6 +2493,7 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
                         encoder_attention_mask=encoder_attention_mask,
                         context_latents=context_latents,
                         joint_frontend=joint_frontend,
+                        cross_stem_attention=cross_stem_attention,
                         target_stem_id=target_stem_id,
                         multi_stem_hidden_states=multi_stem_hidden_states,
                         multi_stem_context_latents=multi_stem_context_latents,

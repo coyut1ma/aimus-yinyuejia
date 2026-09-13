@@ -154,6 +154,7 @@ class ServiceGenerateMixinTests(unittest.TestCase):
             captions="cap",
             lyrics="lyr",
             joint_frontend=True,
+            cross_stem_attention=False,
             target_stem_id=2,
             multi_stem_target_wavs=multi_stem_target_wavs,
         )
@@ -161,6 +162,7 @@ class ServiceGenerateMixinTests(unittest.TestCase):
         self.assertIs(host.calls["_prepare_batch"]["multi_stem_target_wavs"], multi_stem_target_wavs)
         build_kwargs = host.calls["_build_service_generate_kwargs"]
         self.assertTrue(build_kwargs["joint_frontend"])
+        self.assertFalse(build_kwargs["cross_stem_attention"])
         self.assertEqual(build_kwargs["target_stem_id"], 2)
 
 

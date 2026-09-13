@@ -314,6 +314,7 @@ def run_task(
     inference_steps: int = 8,
     repaint_mode: str = "balanced",
     repaint_strength: float = 0.5,
+    cross_stem_attention: bool = True,
 ) -> dict[str, Any]:
     task_dir.mkdir(parents=True, exist_ok=True)
     (task_dir / "task.json").write_text(json.dumps(task, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -379,6 +380,7 @@ def run_task(
             repaint_strength=repaint_strength,
             repaint_wav_crossfade_sec=0.0,
             joint_frontend=True,
+            cross_stem_attention=cross_stem_attention,
             target_stem_id=STEM_TO_ID[stem],
             multi_stem_target_wavs=multi_stem_context,
         )
@@ -414,7 +416,12 @@ def run_task(
         "target_stems": task["target_stems"],
         "edit_region": task["edit_region"],
         "context_region": {"start_sec": context_start, "end_sec": context_end},
-        "backend": "ace-step-cuda-joint-adapter",
+        "backend": (
+            "ace-step-cuda-joint-adapter"
+            if cross_stem_attention
+            else "ace-step-cuda-joint-no-cross-stem"
+        ),
+        "cross_stem_attention": cross_stem_attention,
         "seed": seed,
         "stem_metrics": stem_metrics,
         "mix_metrics": mix_metrics,
@@ -448,6 +455,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--inference-steps", type=int, default=8)
     parser.add_argument("--repaint-mode", choices=("conservative", "balanced", "aggressive"), default="balanced")
     parser.add_argument("--repaint-strength", type=float, default=0.5)
+    parser.add_argument(
+        "--disable-cross-stem-attention",
+        action="store_true",
+        help="Use the same joint frontend path but skip the cross-stem attention exchange.",
+    )
     parser.add_argument("--evaluate", action="store_true", help="Run the existing demo batch evaluator after generation")
     parser.add_argument("--skip-generation", action="store_true", help="Only evaluate an existing output directory")
     parser.add_argument("--use-flash-attention", action="store_true")
@@ -476,10 +488,16 @@ def main(argv: list[str] | None = None) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     summary_path = output_dir / "summary.json"
+    cross_stem_attention = not args.disable_cross_stem_attention
     summary: dict[str, Any] = {
-        "backend": "ace-step-cuda-joint-adapter",
+        "backend": (
+            "ace-step-cuda-joint-adapter"
+            if cross_stem_attention
+            else "ace-step-cuda-joint-no-cross-stem"
+        ),
         "device": args.device,
         "adapter_checkpoint": str(args.adapter_checkpoint.resolve()),
+        "cross_stem_attention": cross_stem_attention,
         "tasks": {},
     }
     if summary_path.is_file():
@@ -539,6 +557,7 @@ def main(argv: list[str] | None = None) -> int:
                     inference_steps=args.inference_steps,
                     repaint_mode=args.repaint_mode,
                     repaint_strength=args.repaint_strength,
+                    cross_stem_attention=cross_stem_attention,
                 )
                 summary["tasks"][task["task_id"]] = metrics
                 completed += 1

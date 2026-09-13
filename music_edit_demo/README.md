@@ -116,6 +116,16 @@ The remote service receives the four source paths, structured target edits,
 time range, prompt, preservation constraints, and seeds. It must return one
 full-duration WAV per requested target stem and seed on a shared filesystem.
 
+For an ablation that keeps the ACE-Step joint frontend path but disables the
+cross-stem attention exchange, set:
+
+```powershell
+$env:ACE_STEP_CROSS_STEM_ATTENTION = "0"
+```
+
+This still sends all four stems and uses the shared first-block joint path on
+the ACE-Step side; only the cross-stem attention residual is skipped.
+
 ## Runtime configuration
 
 | Variable | Default | Purpose |
@@ -176,3 +186,39 @@ multiple reports, the output file contains a JSON array.
 
 The same operation is available as `POST /v1/edit-jobs/{job_id}/evaluation`
 with an optional `seed` query parameter.  Reports use schema `evaluation.v1`.
+
+## MuseCPEval context-preservation evaluation
+
+The repository also carries MuseCPEval under `../third_party/MuseCPEval` as an
+optional objective evaluator for context preservation.  It compares the
+original full mix with an edited candidate mix and can also compare edited
+target stems against their original stems.
+
+Install the downloaded tool into the active environment:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ..\third_party\MuseCPEval
+```
+
+Build a MuseCPEval manifest for the selected candidate of a completed job:
+
+```powershell
+.\.venv\Scripts\python.exe -m music_edit_demo `
+  --runtime-dir runtime_real `
+  musecpeval-manifest --job-id job_<id> `
+  --output runtime_real\musecpeval\job_<id>\pairs.json
+```
+
+Run MuseCPEval directly from the demo.  By default this runs harmony, rhythm,
+melody, and timbre; add `structure` only after installing MuseCPEval's optional
+structure dependencies.
+
+```powershell
+.\.venv\Scripts\python.exe -m music_edit_demo `
+  --runtime-dir runtime_real `
+  musecpeval-run --job-id job_<id> --all --include-target-stems `
+  --output-dir runtime_real\musecpeval\job_<id>\results
+```
+
+Output files follow MuseCPEval's own format: `results.jsonl`, `results.json`,
+and `summary.csv`.

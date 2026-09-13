@@ -54,6 +54,7 @@ class GenerateMusicExecuteMixin:
         flow_edit_n_max: float = 1.0,
         flow_edit_n_avg: int = 1,
         joint_frontend: bool = False,
+        cross_stem_attention: bool = True,
         target_stem_id: Any = 0,
         multi_stem_target_wavs: Any = None,
     ) -> Dict[str, Any]:
@@ -125,6 +126,7 @@ class GenerateMusicExecuteMixin:
                     flow_edit_n_max=flow_edit_n_max,
                     flow_edit_n_avg=flow_edit_n_avg,
                     joint_frontend=joint_frontend,
+                    cross_stem_attention=cross_stem_attention,
                     target_stem_id=target_stem_id,
                     multi_stem_target_wavs=multi_stem_target_wavs,
                 )
